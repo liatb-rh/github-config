@@ -34,6 +34,7 @@ module "repo_github_config" {
   name                = "github-config"
   description         = "Repository for managing osac-project github organization"
   use_public_template = false
+  required_approvals  = 2
   required_status_checks = [
     "pre-commit",
   ]
