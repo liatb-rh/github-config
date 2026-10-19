@@ -430,6 +430,14 @@ module "repo_osac_ux" {
     {
       username   = "liatb-rh"
       permission = "admin"
+    },
+    {
+      username   = "yfrimanm"
+      permission = "admin"
+    },
+    {
+      username   = "heyethankim"
+      permission = "admin"
     }
   ]
   pages = {
