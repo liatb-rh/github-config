@@ -20,6 +20,30 @@ variable "required_approvals" {
   default     = 1
 }
 
+variable "require_code_owner_reviews" {
+  description = "Require an approving review from a code owner (per the repository's CODEOWNERS file) before merging a pull request. Only has an effect when required_approvals is not null."
+  type        = bool
+  default     = false
+}
+
+variable "pull_request_bypassers" {
+  description = "Actors allowed to merge without the required pull request reviews (including code owner reviews). Only has an effect when required_approvals is not null. Actor names must begin with '/' for users or 'org-name/' for teams."
+  type        = list(string)
+  default     = []
+}
+
+variable "dismiss_stale_reviews" {
+  description = "Dismiss approving reviews when new commits are pushed. Only has an effect when required_approvals is not null."
+  type        = bool
+  default     = false
+}
+
+variable "allow_update_branch" {
+  description = "Always show the Update branch button on pull requests, even when the branch is not required to be up to date"
+  type        = bool
+  default     = false
+}
+
 variable "required_status_checks" {
   description = "Status checks that must pass before a PR can merge"
   type = list(object({
@@ -45,6 +69,12 @@ variable "branch_protection" {
   default     = true
 }
 
+variable "lock_branch" {
+  description = "Make the protected branch read-only, blocking all pushes. Intended for repositories that have been merged into another repo and are pending archival."
+  type        = bool
+  default     = false
+}
+
 variable "labels" {
   description = "List of labels to configure on the repository"
   type = list(object({
@@ -56,18 +86,24 @@ variable "labels" {
 }
 
 variable "teams" {
-  description = "Teams with access to this repository"
+  description = "Teams with access to this repository. permission is pull, push, maintain, triage, admin, or the name of a custom repository role (see organization.tf)."
   type = list(object({
     team_id    = string
     permission = string
   }))
   default = []
   validation {
-    error_message = "unknown permission: permission must be one of pull, push, maintain, triage, or admin"
+    error_message = "unknown permission: permission must be one of pull, push, maintain, triage, admin, or a custom repository role name"
     condition = alltrue([
-      for v in var.teams : contains(["pull", "push", "maintain", "triage", "admin"], v.permission)
+      for v in var.teams : contains(["pull", "push", "maintain", "triage", "admin"], v.permission) || can(regex("^[a-z][a-z0-9-]*-[a-z0-9-]+$", v.permission))
     ])
   }
+}
+
+variable "contributor_teams" {
+  description = "Teams granted push access to this repository. An entry in \"teams\" for the same team overrides this permission."
+  type        = list(string)
+  default     = []
 }
 
 variable "users" {
@@ -184,6 +220,26 @@ variable "ruleset_bypass_team_ids" {
   default     = []
 }
 
+variable "merge_queue" {
+  description = "Merge queue configuration. When set, enables merge queue on the default branch and disables strict status checks (the queue handles freshness)."
+  type = object({
+    merge_method                      = optional(string, "SQUASH")
+    max_entries_to_build              = optional(number, 5)
+    max_entries_to_merge              = optional(number, 5)
+    min_entries_to_merge              = optional(number, 1)
+    min_entries_to_merge_wait_minutes = optional(number, 5)
+    check_response_timeout_minutes    = optional(number, 60)
+    grouping_strategy                 = optional(string, "ALLGREEN")
+  })
+  default = null
+}
+
+variable "strict_required_status_checks" {
+  description = "Require branches to be up to date before merging (strict status checks). Defaults to true when merge_queue is not enabled, false when it is. Set explicitly to override the default for a specific repository."
+  type        = bool
+  default     = null
+}
+
 variable "all_members_permission" {
   description = "Permission for all organization members"
   type        = string
@@ -192,4 +248,21 @@ variable "all_members_permission" {
     error_message = "invalid permission name"
     condition     = contains(["pull", "push", "triage", "maintain", "admin"], var.all_members_permission)
   }
+}
+
+variable "tag_rulesets" {
+  description = <<-EOT
+    Tag protection rulesets. Each entry creates two ruleset resources for the
+    given ref patterns: one allowing tag creation only to the listed GitHub
+    App IDs (nobody, if left empty), and one blocking tag updates and
+    deletions for everyone unconditionally, with no bypass. Intended for
+    marker/automation tags that a specific trusted CI identity creates and
+    that should otherwise be immutable.
+  EOT
+  type = list(object({
+    name                    = string
+    ref_patterns            = list(string)
+    creation_bypass_app_ids = optional(list(number), [])
+  }))
+  default = []
 }

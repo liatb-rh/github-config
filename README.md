@@ -20,12 +20,47 @@ When a commit is pushed to the `main` branch (e.g., when a pull request merges),
 ### Add a new team?
 
 1. Open `teams.csv`
-1. Add a new row of the form `<team_name>,<description>,<privacy>`, where `<privacy>` can be either `closed` (visible to all members of the organization) or `secret` (visible to organization owners and members of this team)
+1. Add a new row of the form `<team_name>,<description>,<privacy>,<contributor>`, where `<privacy>` can be either `closed` (visible to all members of the organization) or `secret` (visible to organization owners and members of this team).
+   Set `<contributor>` to `true` to give the team push access on every repository that uses `local.contributor_teams` in `repositories.tf` (the working group teams), or `false` otherwise.
 
 ### Add an organization member to a team?
 
 1. Open `team-members/<team>.csv`
 1. Add a new line of the form `<username>,<role>`, where `<role>` should be `member`.
+
+Which team? Teams follow the OSAC engineering roster:
+
+- `wg-*`: one team per working group (for example `wg-core`, `wg-storage`, `wg-infra`).
+  Working group teams have push access to the OSAC repositories.
+- `contributors`: people who contribute but aren't in a working group. Same push access.
+- `managers`, `architects`, `wg-leads`: role teams across all working groups. `managers`
+  also has admin on the main repositories and ruleset bypass (see below).
+- `ci-duty`: CI duty and merge assistance (see below).
+- `fulfillment-wg`: legacy team with no repository access. It is kept only because the
+  hypershift1 cluster (`osac-project/managed-cluster-config`) uses it for OAuth login,
+  RBAC, ArgoCD and Vault. Don't add people to it for repository access.
+
+### Give someone runner management or merge-queue bypass without making them an org owner?
+
+Add them to the `ci-duty` team (`team-members/ci-duty.csv`). That team:
+
+- Holds GitHub's predefined **CI/CD admin** organization role, granting management of
+  org self-hosted runners and runner groups (plus Actions policies, secrets, variables,
+  and usage metrics). See `organization.tf`.
+- Can force-merge ("Merge without waiting for requirements to be met") on `osac`,
+  `osac-test-infra` and `enhancement-proposals`: it is a ruleset bypass actor there
+  (`ruleset_bypass_team_ids`), so its members can bypass the merge queue and required status
+  checks, and on `osac` it may also bypass the required reviews (`pull_request_bypassers`).
+  GitHub shows that checkbox only to someone who can bypass every rule on the branch. See
+  `repositories.tf`.
+- Has the `ci-maintainer` custom repository role on `osac` and `osac-test-infra`: write, plus
+  management of the repository's Actions secrets, variables, environments, settings and
+  runners, merge queue priority (jump the queue, solo merge), and bypass of branch
+  protections (which GitHub needs in order to offer the force-merge checkbox). See
+  `organization.tf`.
+
+The `managers` team holds the narrower `runner-manager` role, admin on the main
+repositories, and ruleset bypass on every repository with required status checks.
 
 ### Add a new repository?
 
@@ -74,13 +109,11 @@ In general, you won't need to do this: the configuration is applied when a pull 
 
 1. Acquire S3 credentials.
 
-    OpenTofu maintains state information about the target infrastructure; you need this state in order to plan and apply the configuration. We store this information in an S3 bucket provided by the [NERC]. You need appropriate AWS credentials in order for OpenTofu to access the cached state. These should be provided in the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
+    OpenTofu maintains state information about the target infrastructure; you need this state in order to plan and apply the configuration. We store this information in the `osac-terraform-state` S3 bucket (`us-east-1`) in an OSAC-controlled AWS account. The bucket is versioned, and OpenTofu takes a lock on the state (`osac.tfstate.tflock`) while it plans or applies. You need appropriate AWS credentials in order for OpenTofu to access the cached state. These should be provided in the `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` environment variables.
 
 1. Acquire GitHub credentials.
 
     In order to apply the configuration, OpenTofu needs administrative access to our organization. You will need a token with at least `admin:org` and `repo` privileges for the `osac-project` organization. This should be provided in the `GITHUB_TOKEN` environment variable.
-
-[nerc]: https://nerc.mghpcc.org/
 
 ## Additional documentation
 

@@ -56,12 +56,15 @@ module "repo_docs" {
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_all_members_permission"></a> [all\_members\_permission](#input\_all\_members\_permission) | Permission for all organization members | `string` | `"triage"` | no |
+| <a name="input_allow_update_branch"></a> [allow\_update\_branch](#input\_allow\_update\_branch) | Always show the Update branch button on pull requests, even when the branch is not required to be up to date | `bool` | `false` | no |
 | <a name="input_branch_protection"></a> [branch\_protection](#input\_branch\_protection) | Configure branch protection if true | `bool` | `true` | no |
 | <a name="input_description"></a> [description](#input\_description) | Repository description | `string` | `""` | no |
+| <a name="input_dismiss_stale_reviews"></a> [dismiss\_stale\_reviews](#input\_dismiss\_stale\_reviews) | Dismiss approving reviews when new commits are pushed. Only has an effect when required\_approvals is not null. | `bool` | `false` | no |
 | <a name="input_is_template"></a> [is\_template](#input\_is\_template) | Set this to true if this is a template repository | `bool` | `false` | no |
 | <a name="input_labels"></a> [labels](#input\_labels) | List of labels to configure on the repository | <pre>list(object({<br/>    name        = string<br/>    color       = string<br/>    description = string<br/>  }))</pre> | `null` | no |
 | <a name="input_name"></a> [name](#input\_name) | The name of the repository | `string` | n/a | yes |
 | <a name="input_pages"></a> [pages](#input\_pages) | Configuration for github pages | <pre>object({<br/>    source = optional(object({<br/>      branch = string<br/>      path   = string<br/>    }))<br/>    build_type = optional(string, "legacy")<br/>    cname      = optional(string)<br/>  })</pre> | `null` | no |
+| <a name="input_require_code_owner_reviews"></a> [require\_code\_owner\_reviews](#input\_require\_code\_owner\_reviews) | Require an approving review from a code owner (per the repository's CODEOWNERS file) before merging a pull request. Only has an effect when required\_approvals is not null. | `bool` | `false` | no |
 | <a name="input_required_approvals"></a> [required\_approvals](#input\_required\_approvals) | Number of approvals required before merging a pull request | `number` | `1` | no |
 | <a name="input_required_status_checks"></a> [required\_status\_checks](#input\_required\_status\_checks) | A list of status checks that must pass before a PR can merge | `list(string)` | `[]` | no |
 | <a name="input_teams"></a> [teams](#input\_teams) | Teams with access to this repository | <pre>list(object({<br/>    team_id    = string<br/>    permission = string<br/>  }))</pre> | `[]` | no |

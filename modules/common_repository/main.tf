@@ -1,19 +1,22 @@
 resource "github_repository" "repo" {
-  name                 = var.name
-  archived             = var.archived
-  visibility           = var.visibility
-  description          = var.description
-  auto_init            = true
-  allow_auto_merge     = var.visibility == "private" ? false : true
-  allow_merge_commit   = var.allow_merge_commit
-  allow_squash_merge   = var.allow_squash_merge
-  allow_rebase_merge   = var.allow_rebase_merge
-  has_issues           = true
-  has_downloads        = false
-  has_projects         = false
-  has_wiki             = false
-  is_template          = var.is_template
-  vulnerability_alerts = var.vulnerability_alerts
+  name                        = var.name
+  archived                    = var.archived
+  visibility                  = var.visibility
+  description                 = var.description
+  auto_init                   = true
+  allow_auto_merge            = var.visibility == "private" ? false : true
+  allow_update_branch         = var.allow_update_branch
+  allow_merge_commit          = var.allow_merge_commit
+  allow_squash_merge          = var.allow_squash_merge
+  allow_rebase_merge          = var.allow_rebase_merge
+  squash_merge_commit_title   = "PR_TITLE"
+  squash_merge_commit_message = "PR_BODY"
+  has_issues                  = true
+  has_downloads               = false
+  has_projects                = false
+  has_wiki                    = false
+  is_template                 = var.is_template
+  vulnerability_alerts        = var.vulnerability_alerts
 
   dynamic "template" {
     # Use the public_template repository as a template unless the repository is
@@ -28,7 +31,8 @@ resource "github_repository" "repo" {
 
   dynamic "pages" {
     # enable this block if `pages` is not null
-    for_each = var.pages[*]
+    # Skip pages config for archived repos (GitHub rejects it with 409)
+    for_each = var.archived ? [] : var.pages[*]
 
     content {
       cname      = pages.value.cname
@@ -51,7 +55,8 @@ resource "github_issue_label" "repo_labels" {
 
   # Generate label blocks from the value of local.values, which by default is initialized
   # by the contents of the "labels.csv" file.
-  for_each = {
+  # Skip labels for archived repos (GitHub rejects writes with 409)
+  for_each = var.archived ? {} : {
     for label in local.labels :
     label.name => label
   }
@@ -65,8 +70,9 @@ resource "github_issue_label" "repo_labels" {
 
 resource "github_branch_protection" "repo_protection" {
   # This odd looking construct lets us control the creation of the
-  # branch protection resource with a boolean variable.
-  count = var.visibility == "private" ? 0 : var.branch_protection ? 1 : 0
+  # branch protection resource with a boolean variable, and skip it
+  # entirely for archived repos (GitHub rejects writes with 409).
+  count = var.visibility == "private" ? 0 : var.archived ? 0 : var.branch_protection ? 1 : 0
 
   repository_id = var.name
   pattern       = "main"
@@ -77,6 +83,7 @@ resource "github_branch_protection" "repo_protection" {
   enforce_admins                  = false
   require_conversation_resolution = false
   require_signed_commits          = false
+  lock_branch                     = var.lock_branch
 
   force_push_bypassers = [
     "osac-project/org-admins",
@@ -94,14 +101,18 @@ resource "github_branch_protection" "repo_protection" {
 
     content {
       required_approving_review_count = var.required_approvals
+      require_code_owner_reviews      = var.require_code_owner_reviews
+      dismiss_stale_reviews           = var.dismiss_stale_reviews
+      pull_request_bypassers          = var.pull_request_bypassers
     }
   }
+
 
   depends_on = [github_repository.repo, github_repository_collaborators.repo_collaborators]
 }
 
 resource "github_repository_ruleset" "status_checks" {
-  count = var.visibility == "private" ? 0 : var.branch_protection && length(var.required_status_checks) > 0 ? 1 : 0
+  count = var.visibility == "private" ? 0 : var.archived ? 0 : var.branch_protection && length(var.required_status_checks) > 0 ? 1 : 0
 
   name        = "ci-status-checks"
   repository  = github_repository.repo.name
@@ -112,6 +123,17 @@ resource "github_repository_ruleset" "status_checks" {
     actor_id    = 1
     actor_type  = "OrganizationAdmin"
     bypass_mode = "always"
+  }
+
+  # GitHub Merge Queue app — must bypass the ruleset to push rebased
+  # commits to the protected branch after queue checks pass.
+  dynamic "bypass_actors" {
+    for_each = var.merge_queue != null ? [1] : []
+    content {
+      actor_id    = 262318
+      actor_type  = "Integration"
+      bypass_mode = "always"
+    }
   }
 
   dynamic "bypass_actors" {
@@ -131,8 +153,19 @@ resource "github_repository_ruleset" "status_checks" {
   }
 
   rules {
+    # Block direct pushes — require a PR. CHANGES_REQUESTED reviews are
+    # auto-dismissed by the auto-queue workflow so they don't block merging.
+    dynamic "pull_request" {
+      for_each = var.merge_queue != null ? [1] : []
+      content {
+        required_approving_review_count = 0
+      }
+    }
+
     required_status_checks {
-      strict_required_status_checks_policy = true
+      # When merge queue is enabled, strict is unnecessary — the queue tests
+      # each PR against latest main before merging.
+      strict_required_status_checks_policy = var.strict_required_status_checks != null ? var.strict_required_status_checks : (var.merge_queue != null ? false : true)
 
       dynamic "required_check" {
         for_each = var.required_status_checks
@@ -142,13 +175,84 @@ resource "github_repository_ruleset" "status_checks" {
         }
       }
     }
+
+    dynamic "merge_queue" {
+      for_each = var.merge_queue[*]
+      content {
+        check_response_timeout_minutes    = merge_queue.value.check_response_timeout_minutes
+        grouping_strategy                 = merge_queue.value.grouping_strategy
+        max_entries_to_build              = merge_queue.value.max_entries_to_build
+        max_entries_to_merge              = merge_queue.value.max_entries_to_merge
+        merge_method                      = merge_queue.value.merge_method
+        min_entries_to_merge              = merge_queue.value.min_entries_to_merge
+        min_entries_to_merge_wait_minutes = merge_queue.value.min_entries_to_merge_wait_minutes
+      }
+    }
+  }
+
+  depends_on = [github_repository.repo]
+}
+
+resource "github_repository_ruleset" "tag_creation" {
+  for_each = var.archived ? {} : { for r in var.tag_rulesets : r.name => r }
+
+  name        = "${each.value.name}-creation"
+  repository  = github_repository.repo.name
+  target      = "tag"
+  enforcement = "active"
+
+  dynamic "bypass_actors" {
+    for_each = each.value.creation_bypass_app_ids
+    content {
+      actor_id    = bypass_actors.value
+      actor_type  = "Integration"
+      bypass_mode = "always"
+    }
+  }
+
+  conditions {
+    ref_name {
+      include = each.value.ref_patterns
+      exclude = []
+    }
+  }
+
+  rules {
+    creation = true
+  }
+
+  depends_on = [github_repository.repo]
+}
+
+resource "github_repository_ruleset" "tag_immutable" {
+  for_each = var.archived ? {} : { for r in var.tag_rulesets : r.name => r }
+
+  name        = "${each.value.name}-immutable"
+  repository  = github_repository.repo.name
+  target      = "tag"
+  enforcement = "active"
+
+  # Deliberately no bypass_actors -- updates/deletions are blocked for
+  # everyone, including the App(s) allowed to create matching tags above.
+
+  conditions {
+    ref_name {
+      include = each.value.ref_patterns
+      exclude = []
+    }
+  }
+
+  rules {
+    update   = true
+    deletion = true
   }
 
   depends_on = [github_repository.repo]
 }
 
 resource "github_repository_environment" "env" {
-  for_each = {
+  # Skip environments for archived repos (GitHub rejects writes with 409)
+  for_each = var.archived ? {} : {
     for env in var.environments :
     env.name => env
   }
@@ -191,15 +295,17 @@ resource "github_repository_collaborators" "repo_collaborators" {
     permission = var.all_members_permission
   }
 
-  # Generate team blocks from the value of the "teams" input variable.
+  # Generate team blocks from the "contributor_teams" (push) and "teams"
+  # input variables. An explicit "teams" entry overrides the contributor
+  # push permission for the same team.
   dynamic "team" {
-    for_each = {
-      for team in var.teams :
-      team.team_id => team
-    }
+    for_each = merge(
+      { for team_id in var.contributor_teams : team_id => "push" },
+      { for team in var.teams : team.team_id => team.permission },
+    )
     content {
-      team_id    = team.value.team_id
-      permission = team.value.permission
+      team_id    = team.key
+      permission = team.value
     }
   }
 
